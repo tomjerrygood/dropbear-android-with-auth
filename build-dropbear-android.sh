@@ -9,7 +9,8 @@ export TARGET=../target
 # Specify binaries to build. Options: dropbear dropbearkey scp dbclient
 export PROGRAMS="dropbear dropbearkey"
 # Which version of Dropbear to download for patching
-export VERSION=2018.76
+#export VERSION=2018.76
+export VERSION=2026.94
 
 # Download the latest version of dropbear SSH
 if [ ! -f ./dropbear-$VERSION.tar.bz2 ]; then
