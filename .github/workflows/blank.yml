@@ -1,0 +1,51 @@
+name: Build tosiara dropbear-android ARMv7
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # 网页手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout my repo
+        uses: actions/checkout@v4
+
+      - name: Clone tosiara/dropbear-android source
+        run: git clone https://github.com/tosiara/dropbear-android.git src-tosiara
+
+      - name: Setup Android NDK r21b
+        uses: android-actions/setup-android@v3
+        with:
+          ndk-version: 21.4.7075529
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y wget tar make git
+          echo "ANDROID_NDK_ROOT=${ANDROID_NDK}" >> $GITHUB_ENV
+          echo "PATH=${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin:${PATH}" >> $GITHUB_ENV
+
+      - name: Build dropbear armv7 (native auth)
+        working-directory: src-tosiara
+        run: |
+          chmod +x build.sh
+          ./build.sh arm
+        env:
+          ANDROID_API: 28
+
+      - name: Prepare output artifacts
+        run: |
+          mkdir -p ./output
+          cp src-tosiara/build/arm/dropbearmulti ./output/
+          # 拆分 multi 二进制
+          cd output
+          ln -s dropbearmulti dropbear
+          ln -s dropbearmulti dropbearkey
+          ln -s dropbearmulti scp
+
+      - name: Upload compiled binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: dropbear-tosiara-armv7-api28
+          path: output/
