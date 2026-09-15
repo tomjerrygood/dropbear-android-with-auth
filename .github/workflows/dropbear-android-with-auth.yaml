@@ -23,7 +23,7 @@ jobs:
           path: ${{ env.NDK_ROOT }}
           key: ndk-${{ env.NDK_VERSION }}
 
-      - name: Download Android NDK r25c (cache miss)
+      - name: Download Android NDK r25c
         if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
           wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
@@ -36,7 +36,7 @@ jobs:
           path: ${{ github.workspace }}/dropbear-${{ env.DROPBEAR_VER }}
           key: dropbear-src-${{ env.DROPBEAR_VER }}
 
-      - name: Fetch Dropbear source (cache miss)
+      - name: Fetch Dropbear source
         if: steps.cache-dropbear.outputs.cache-hit != 'true'
         run: |
           wget -q https://mjt.dt.cc/code/dropbear/dropbear-${{ env.DROPBEAR_VER }}.tar.bz2
@@ -52,36 +52,36 @@ jobs:
           echo "#define DROPBEAR_TCP_FORWARDING 1" >> localoptions.h
           echo "#define DROPBEAR_UNIX_FORWARDING 0" >> localoptions.h
 
-      - name: Patch svr-auth.c custom auth code
+      - name: Patch svr-auth.c
         run: |
           cd dropbear-${{ env.DROPBEAR_VER }}
-          # 先定义C代码片段
-          PATCH_HEADER='static char *custom_auth_user = NULL;
+          cat > patch_head.txt <<'EOF'
+static char *custom_auth_user = NULL;
 static char *custom_auth_pass = NULL;
 
 void set_custom_auth(const char *s) {
     if (!s) return;
-    char *sep = strchr(s, '\'\'\:'\'\'');
+    char *sep = strchr(s, ':');
     if (sep) {
         *sep = 0;
         custom_auth_user = strdup(s);
         custom_auth_pass = strdup(sep+1);
     }
-}'
-          # 在文件最开头插入上面代码
-          echo "${PATCH_HEADER}" | cat - src/svr-auth.c > src/svr-auth.c.tmp
+}
+EOF
+          cat patch_head.txt src/svr-auth.c > src/svr-auth.c.tmp
           mv src/svr-auth.c.tmp src/svr-auth.c
 
-          # 在check_password函数开头增加校验逻辑
-          PATCH_CHECK='
+          cat > patch_check.txt <<'EOF'
     if (custom_auth_user && custom_auth_pass) {
         if (strcmp(username, custom_auth_user)==0 && strcmp(password, custom_auth_pass)==0) {
             return 1;
         }
-    }'
-          sed -i "/int check_password/,/{/a\\${PATCH_CHECK}" src/svr-auth.c
+    }
+EOF
+          sed -i '/int check_password/,/{/r patch_check.txt' src/svr-auth.c
 
-      - name: Patch svr-runopts.c add -A option
+      - name: Patch svr-runopts.c
         run: |
           cd dropbear-${{ env.DROPBEAR_VER }}
           sed -i 's/getopt(argc, argv, "h:p:d:g:s:b:r:R:W:U:G:m:l:i:k")/getopt(argc, argv, "h:p:d:g:s:b:r:R:W:U:G:m:l:i:kA")/' src/svr-runopts.c
