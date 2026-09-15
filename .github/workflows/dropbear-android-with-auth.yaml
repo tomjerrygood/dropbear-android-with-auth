@@ -25,10 +25,11 @@ jobs:
           wget https://mjt.dt.cc/code/dropbear/dropbear-2024.86.tar.bz2
           tar -xjvf dropbear-2024.86.tar.bz2
 
-      - name: Apply patch
+      - name: Apply patch + copy localoptions.h
         run: |
           cd dropbear-2024.86
           patch -p1 < ../android-dropbear-auth.patch
+          cp ../localoptions.h .
 
       - name: Cross compile ARMv7 API24
         run: >
@@ -43,22 +44,6 @@ jobs:
           export CXX=$TOOLCHAIN/bin/${TARGET}-clang++;
           export RANLIB=$TOOLCHAIN/bin/llvm-ranlib;
           export STRIP=$TOOLCHAIN/bin/llvm-strip;
-
-          cat > localoptions.h <<'EOF'
-#define DROPBEAR_DEFAULT_PORT 2222
-#define DROPBEAR_SFTPSERVER 1
-#define DROPBEAR_USE_PASSWORD_AUTH 1
-#define DROPBEAR_PUBKEY_AUTH 1
-#define DROPBEAR_NO_X11 1
-#define DROPBEAR_SMALL_CODE 1
-#define DROPBEAR_AES 1
-#define DROPBEAR_SHA2_256_HASH 1
-#define DROPBEAR_SHA2_512_HASH 1
-#define DROPBEAR_ED25519 1
-#define DROPBEAR_DSS 0
-#define DROPBEAR_RSA 1
-EOF
-
           ./configure --host=armv7a-linux-androideabi --disable-zlib --enable-static --without-pam --disable-utmp --disable-utmpx --disable-wtmp --disable-wtmpx --disable-loginfunc --disable-pututxline;
           make -j1;
           $STRIP dropbear dbclient dropbearkey;
