@@ -1,4 +1,4 @@
-name: Build dropbear-android (tosiara / Geofferey repo build.sh)
+name: Build dropbear-android (Geofferey repo native build.sh)
 on:
   push:
     branches: [ main ]
@@ -6,16 +6,14 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     steps:
       - name: Checkout workspace
         uses: actions/checkout@v5
 
-      # 拉取仓库，内含 build.sh + patch
       - name: Clone dropbear-android repo
         run: git clone https://gitlab.com/Geofferey/dropbear-android.git src-dropbear-android
 
-      # 下载 NDK r11c，该仓库readme指定用r11c（仓库原生要求）
       - name: Download Android NDK r11c
         run: |
           wget -q https://dl.google.com/android/repository/android-ndk-r11c-linux-x86_64.zip
@@ -28,14 +26,12 @@ jobs:
           sudo apt update
           sudo apt install -y wget unzip tar make git bzip2 patch
 
-      # 执行仓库原生 build.sh（脚本内部自动下载dropbear源码+打补丁）
       - name: Run original build.sh
         working-directory: src-dropbear-android
         run: |
           chmod +x build.sh
           ./build.sh
 
-      # 收集编译输出，仓库脚本输出路径 target/arm/dropbearmulti
       - name: Collect binaries
         run: |
           mkdir -p ./output
@@ -48,5 +44,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dropbear-android-armv7
+          name: tosiara-dropbear-armv7-android9
           path: output/
