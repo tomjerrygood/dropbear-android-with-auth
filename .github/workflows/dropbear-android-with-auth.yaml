@@ -22,7 +22,8 @@ jobs:
 
       - name: Download Dropbear 2024.86 source
         run: |
-          git clone --depth=1 --branch DROPBEAR_2024_86 https://github.com/mkj/dropbear dropbear-2024.86
+          wget https://dropbear.nl/mirror/releases/dropbear-2024.86.tar.bz2
+          tar -xjvf dropbear-2024.86.tar.bz2
 
       - name: Apply patch + copy localoptions.h
         run: |
