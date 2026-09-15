@@ -48,10 +48,10 @@ jobs:
             return DROPBEAR_FAILURE;\
           }' src/svr-auth.c
 
-          # 3. main.c: add global var
-          sed -i '/static char \*chroot_path = NULL;/a\static char *fixed_auth = NULL;' src/main.c
+          # 3. svr-main.c: add global var
+          sed -i '/static char \*chroot_path = NULL;/a\static char *fixed_auth = NULL;' src/svr-main.c
           # 4. help text add -A
-          sed -i '/fprintf(stderr, "-w           Disallow root logins\\n");/a\  fprintf(stderr, "-A user:pass Fixed login user/password\\n");' src/main.c
+          sed -i '/fprintf(stderr, "-w           Disallow root logins\\n");/a\  fprintf(stderr, "-A user:pass Fixed login user/password\\n");' src/svr-main.c
           # 5. parse -A argument
           sed -i '/case '\''?'\''/i\case '\''A'\'':\
             fixed_auth = optarg;\
@@ -61,7 +61,7 @@ jobs:
               fixed_auth_user = fixed_auth;\
               fixed_auth_pass = colon + 1;\
             }\
-            break;' src/main.c
+            break;' src/svr-main.c
           # copy localoptions.h
           cp ../localoptions.h .
 
