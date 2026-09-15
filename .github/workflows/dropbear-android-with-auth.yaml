@@ -29,8 +29,8 @@ jobs:
       - name: Build dropbear armv7 (native auth)
         working-directory: src-tosiara
         run: |
-          chmod +x build.sh
-          ./build.sh arm
+          chmod +x build-all.sh
+          ./build-all.sh arm
         env:
           ANDROID_API: 28
 
