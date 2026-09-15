@@ -1,4 +1,4 @@
-name: Build tosiara patched dropbear 2024.86 ARMv7
+name: Build dropbear-android (tosiara / Geofferey repo build.sh)
 on:
   push:
     branches: [ main ]
@@ -8,64 +8,38 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout my repo
+      - name: Checkout workspace
         uses: actions/checkout@v5
 
-      - name: Clone tosiara/dropbear-android (patch files)
-        run: git clone https://github.com/tosiara/dropbear-android.git patches-tosiara
+      # 拉取仓库，内含 build.sh + patch
+      - name: Clone dropbear-android repo
+        run: git clone https://gitlab.com/Geofferey/dropbear-android.git src-dropbear-android
 
-      - name: Download Android NDK r21b
+      # 下载 NDK r11c，该仓库readme指定用r11c（仓库原生要求）
+      - name: Download Android NDK r11c
         run: |
-          wget -q https://dl.google.com/android/repository/android-ndk-r21b-linux-x86_64.zip
-          unzip -q android-ndk-r21b-linux-x86_64.zip
-          echo "ANDROID_NDK_ROOT=$PWD/android-ndk-r21b" >> $GITHUB_ENV
-          echo "PATH=$PWD/android-ndk-r21b/toolchains/llvm/prebuilt/linux-x86_64/bin:${PATH}" >> $GITHUB_ENV
+          wget -q https://dl.google.com/android/repository/android-ndk-r11c-linux-x86_64.zip
+          unzip -q android-ndk-r11c-linux-x86_64.zip
+          echo "ANDROID_NDK_ROOT=$PWD/android-ndk-r11c" >> $GITHUB_ENV
+          echo "PATH=$PWD/android-ndk-r11c:${PATH}" >> $GITHUB_ENV
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y wget unzip tar make git bzip2 patch
 
-      - name: Download OFFICIAL dropbear 2024.86 source
+      # 执行仓库原生 build.sh（脚本内部自动下载dropbear源码+打补丁）
+      - name: Run original build.sh
+        working-directory: src-dropbear-android
         run: |
-          wget -q https://matt.ucc.asn.au/dropbear/releases/dropbear-2024.86.tar.bz2
-          tar -xjf dropbear-2024.86.tar.bz2
-          cd dropbear-2024.86
-          # apply tosiara patch
-          patch -p1 < ../patches-tosiara/dropbear-android.patch
+          chmod +x build.sh
+          ./build.sh
 
-      - name: Prepare cross compile env
-        run: |
-          export TARGET_TRIPLE=armv7a-linux-androideabi28
-          export CC=${TARGET_TRIPLE}-clang
-          export CXX=${TARGET_TRIPLE}-clang++
-          export AR=${TARGET_TRIPLE}-ar
-          export CFLAGS="-march=armv7-a -mfpu=neon -mfloat-abi=softfp -fPIE -O2"
-          export LDFLAGS="-pie"
-          echo "TARGET_TRIPLE=${TARGET_TRIPLE}" >> $GITHUB_ENV
-          echo "CC=${CC}" >> $GITHUB_ENV
-          echo "CXX=${CXX}" >> $GITHUB_ENV
-          echo "AR=${AR}" >> $GITHUB_ENV
-          echo "CFLAGS=${CFLAGS}" >> $GITHUB_ENV
-          echo "LDFLAGS=${LDFLAGS}" >> $GITHUB_ENV
-
-      - name: Build dropbear (patched with tosiara auth patch)
-        working-directory: dropbear-2024.86
-        run: |
-          ./configure \
-            --host=${TARGET_TRIPLE} \
-            CC="${CC}" \
-            CXX="${CXX}" \
-            AR="${AR}" \
-            CFLAGS="${CFLAGS}" \
-            LDFLAGS="${LDFLAGS}" \
-            --disable-zlib
-          make -j$(nproc)
-
-      - name: Collect output binaries
+      # 收集编译输出，仓库脚本输出路径 target/arm/dropbearmulti
+      - name: Collect binaries
         run: |
           mkdir -p ./output
-          cp dropbear-2024.86/dropbearmulti ./output/
+          cp src-dropbear-android/target/arm/dropbearmulti ./output/
           cd output
           ln -s dropbearmulti dropbear
           ln -s dropbearmulti dropbearkey
@@ -74,5 +48,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dropbear-tosiara-2024.86-armv7-api28
+          name: dropbear-android-armv7
           path: output/
