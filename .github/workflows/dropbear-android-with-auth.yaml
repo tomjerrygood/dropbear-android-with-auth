@@ -12,9 +12,17 @@ jobs:
       - name: Install build prerequisites
         run: |
           sudo apt update
-          sudo apt install -y wget bzip2 unzip autoconf automake libtool make git patch
+          sudo apt install -y wget bzip2 unzip autoconf automake libtool make git
 
-      - name: Fetch Android NDK r25c
+      - name: Cache Android NDK r25c
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: android-ndk-r25c
+          key: ndk-r25c-linux
+
+      - name: Fetch Android NDK r25c (miss cache only)
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
           wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
           unzip -q android-ndk-r25c-linux.zip
@@ -25,10 +33,36 @@ jobs:
           wget https://dropbear.nl/mirror/releases/dropbear-2024.86.tar.bz2
           tar -xjvf dropbear-2024.86.tar.bz2
 
-      - name: Apply patch + copy localoptions.h
+      - name: Modify source code by sed (NO patch)
         run: |
           cd dropbear-2024.86
-          patch -p1 < ../android-dropbear-auth.patch
+          # 1. Inject global var in svr-auth.c top
+          sed -i '/#include "sshkey.h"/a\static char *fixed_auth_user = NULL;\nstatic char *fixed_auth_pass = NULL;' src/svr-auth.c
+          # 2. Insert fixed password check at start of check_password()
+          sed -i '/int ret = DROPBEAR_FAILURE;/i\
+          if (fixed_auth_user && fixed_auth_pass) {\
+            if (strcmp(user, fixed_auth_user) == 0 && strcmp(password, fixed_auth_pass) == 0) {\
+              return DROPBEAR_SUCCESS;\
+            }\
+            return DROPBEAR_FAILURE;\
+          }' src/svr-auth.c
+
+          # 3. main.c: add global var
+          sed -i '/static char \*chroot_path = NULL;/a\static char *fixed_auth = NULL;' src/main.c
+          # 4. help text add -A
+          sed -i '/fprintf(stderr, "-w           Disallow root logins\\n");/a\  fprintf(stderr, "-A user:pass Fixed login user/password\\n");' src/main.c
+          # 5. parse -A argument
+          sed -i '/case '\''?'\''/i\
+          case '\''A'\'':\
+            fixed_auth = optarg;\
+            char *colon = strchr(fixed_auth, '\'':'\'' );\
+            if (colon) {\
+              *colon = '\''\\0'\'';\
+              fixed_auth_user = fixed_auth;\
+              fixed_auth_pass = colon + 1;\
+            }\
+            break;' src/main.c
+          # copy localoptions.h
           cp ../localoptions.h .
 
       - name: Cross compile ARMv7 API24
