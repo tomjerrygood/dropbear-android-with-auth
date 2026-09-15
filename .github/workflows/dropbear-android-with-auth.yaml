@@ -1,69 +1,76 @@
-name: Build Dropbear 2024.86 Android ARMv7
+name: Build Dropbear 2024.86 ARMv7 Android(API24)
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
+
+env:
+  NDK_VERSION: r25c
+  NDK_ROOT: ${{ github.workspace }}/android-ndk-r25c
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout source repo
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Install build prerequisites
+      - name: Download Android NDK r25c
         run: |
-          sudo apt update
-          sudo apt install -y wget bzip2 unzip autoconf automake libtool make git
-
-      - name: Cache Android NDK r25c
-        id: cache-ndk
-        uses: actions/cache@v4
-        with:
-          path: android-ndk-r25c
-          key: ndk-r25c-linux
-
-      - name: Fetch Android NDK r25c (miss cache only)
-        if: steps.cache-ndk.outputs.cache-hit != 'true'
-        run: |
-          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
           unzip -q android-ndk-r25c-linux.zip
-          echo "NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV
 
       - name: Download Dropbear 2024.86 source
         run: |
-          wget https://dropbear.nl/mirror/releases/dropbear-2024.86.tar.bz2
-          tar -xjvf dropbear-2024.86.tar.bz2
+          wget -q https://mjt.dt.cc/code/dropbear/dropbear-2024.86.tar.bz2
+          tar -xf dropbear-2024.86.tar.bz2
 
-      - name: Modify source code by sed (NO patch)
+      - name: Prepare localoptions.h
+        run: |
+          cat > dropbear-2024.86/localoptions.h <<'EOF'
+#define DROPBEAR_SVR_PASSWORD_AUTH 0
+#define DROPBEAR_SVR_PUBKEY_AUTH 1
+#define DROPBEAR_SFTPSERVER 1
+#define DROPBEAR_USE_SSH_CONFIG 0
+#define DROPBEAR_TCP_FORWARDING 1
+#define DROPBEAR_UNIX_FORWARDING 0
+EOF
+
+      - name: Patch svr-auth.c add custom -A user:pass auth
         run: |
           cd dropbear-2024.86
-          ls -la
-          ls -la src
-          # 1. Inject global var in svr-auth.c top
-          sed -i '/#include "sshkey.h"/a\static char *fixed_auth_user = NULL;\nstatic char *fixed_auth_pass = NULL;' src/svr-auth.c
-          # 2. Insert fixed password check at start of check_password()
-          sed -i '/int ret = DROPBEAR_FAILURE;/i\if (fixed_auth_user && fixed_auth_pass){\
-            if (strcmp(user, fixed_auth_user) == 0 && strcmp(password, fixed_auth_pass) == 0) {\
-              return DROPBEAR_SUCCESS;\
-            }\
-            return DROPBEAR_FAILURE;\
-          }' src/svr-auth.c
+          sed -i '/int check_password/a\
+static char *custom_auth_user = NULL;\
+static char *custom_auth_pass = NULL;\
+\
+void set_custom_auth(const char *s) {\
+    if (!s) return;\
+    char *sep = strchr(s, \':\');\
+    if (sep) {\
+        *sep = 0;\
+        custom_auth_user = strdup(s);\
+        custom_auth_pass = strdup(sep+1);\
+    }\
+}\
+\
+if (custom_auth_user && custom_auth_pass) {\
+    if (strcmp(username, custom_auth_user)==0 && strcmp(password, custom_auth_pass)==0) {\
+        return 1;\
+    }\
+}' src/svr-auth.c
 
-          # 3. svr-main.c: add global var
-          sed -i '/static char \*chroot_path = NULL;/a\static char *fixed_auth = NULL;' src/svr-main.c
-          # 4. help text add -A
-          sed -i '/fprintf(stderr, "-w           Disallow root logins\\n");/a\  fprintf(stderr, "-A user:pass Fixed login user/password\\n");' src/svr-main.c
-          # 5. parse -A argument
-          sed -i '/case '\''?'\''/i\case '\''A'\'':\
-            fixed_auth = optarg;\
-            char *colon = strchr(fixed_auth, '\'':'\'' );\
-            if (colon) {\
-              *colon = '\''\\0'\'';\
-              fixed_auth_user = fixed_auth;\
-              fixed_auth_pass = colon + 1;\
-            }\
-            break;' src/svr-main.c
-          # copy localoptions.h
-          cp ../localoptions.h .
+      - name: Patch svr-tcpfwd.c / svr-runopts.c add -A option
+        run: |
+          cd dropbear-2024.86
+          # add -A cmdline argument parsing
+          sed -i '/static void usage/a\
+"\t-A user:pass\tCustom static username/password for auth\n"' src/svr-runopts.c
+          sed -i '/while ((c = getopt(argc, argv,/s/"$/,A"/' src/svr-runopts.c
+          sed -i '/case \'A\':/a\
+set_custom_auth(optarg);\
+break;' src/svr-runopts.c
+          sed -i '/extern void set_custom_auth/d' src/svr-runopts.c
+          sed -i '1i extern void set_custom_auth(const char *s);' src/svr-runopts.c
 
       - name: Cross compile ARMv7 API24
         run: >
@@ -78,16 +85,22 @@ jobs:
           export CXX=$TOOLCHAIN/bin/${TARGET}-clang++;
           export RANLIB=$TOOLCHAIN/bin/llvm-ranlib;
           export STRIP=$TOOLCHAIN/bin/llvm-strip;
-          ./configure --host=armv7a-linux-androideabi --disable-zlib --enable-static --without-pam --disable-utmp --disable-utmpx --disable-wtmp --disable-wtmpx --disable-loginfunc --disable-pututxline;
-          make -j1;
-          $STRIP dropbear dbclient dropbearkey;
-          ./dropbear -V;
+          ./configure --host=armv7a-linux-androideabi
+            --disable-zlib
+            --enable-static
+            --without-pam
+            --disable-utmp
+            --disable-utmpx
+            --disable-wtmp
+            --disable-wtmpx
+            --disable-loginfunc;
+          make -j1 dropbear dropbearkey;
+          $STRIP dropbear dropbearkey;
 
-      - name: Upload binaries
+      - name: Upload compiled binaries
         uses: actions/upload-artifact@v4
         with:
           name: dropbear-armv7-2024.86
           path: |
             dropbear-2024.86/dropbear
-            dropbear-2024.86/dbclient
             dropbear-2024.86/dropbearkey
