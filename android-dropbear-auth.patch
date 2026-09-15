@@ -1,0 +1,98 @@
+--- dropbear-2024.86/src/svr-auth.c
++++ dropbear-2024.86/src/svr-auth.c
+@@ -28,6 +28,8 @@
+ #include "session.h"
+ #include "sshpty.h"
+
++static char *fixed_user = NULL;
++static char *fixed_pass = NULL;
+
+ void svr_auth_init(void) {
+ }
+@@ -104,6 +106,16 @@
+        return DROPBEAR_SUCCESS;
+ }
+
++int custom_passwd_check(const char *user, const char *pass)
++{
++    if (fixed_user && fixed_pass)
++    {
++        if (strcmp(user, fixed_user) == 0 && strcmp(pass, fixed_pass) ==0)
++            return DROPBEAR_SUCCESS;
++    }
++    return DROPBEAR_FAILURE;
++}
++
+ /* Check password auth. Returns DROPBEAR_SUCCESS if password okay,
+  * DROPBEAR_FAILURE otherwise. */
+ int svr_check_password(const char *username, const char *password) {
+@@ -112,6 +124,9 @@
+        return DROPBEAR_FAILURE;
+    }
+
++    if (custom_passwd_check(username, password) == DROPBEAR_SUCCESS) {
++        return DROPBEAR_SUCCESS;
++    }
+ #ifdef HAVE_PAM
+    if (svr_check_pam(username, password) == DROPBEAR_SUCCESS) {
+@@ -425,6 +440,15 @@
+        }
+    }
+ }
+
++void set_fixed_auth(char *userpass)
++{
++    char *sep = strchr(userpass, ':');
++    if (sep)
++    {
++        *sep = '\0';
++        fixed_user = userpass;
++        fixed_pass = sep+1;
++    }
++}
+--- dropbear-2024.86/src/dropbear.h
++++ dropbear-2024.86/src/dropbear.h
+@@ -243,6 +243,7 @@
+ void dropbear_close_all_sessions(void);
+ void svr_dropbear_run(const char *banner);
+ void svr_set_maxauthattempts(int max);
++void set_fixed_auth(char *userpass);
+
+ struct DropbearProgress {
+        long long total;
+--- dropbear-2024.86/src/main.c
++++ dropbear-2024.86/src/main.c
+@@ -230,6 +230,8 @@
+ int opt_maxauthattempts = 10;
+ char *opt_banner = NULL;
+
++char *opt_fixed_auth = NULL;
++
+ static void printhelp(void) {
+        dropbear_log(LOG_INFO,
+"Dropbear sshd v" DROPBEAR_VERSION "\n"
+@@ -258,6 +260,7 @@
+"-r <file>        hostkey file (required, multiple -r allowed)\n"
+"-s               disable sftp\n"
+"-j               disable local port forwarding\n"
++"-A user:passwd   set fixed user+password for auth\n"
+"-k               disable remote port forwarding\n"
+"-w               disallow root logins\n"
+"-W <max>         max window size\n"
+@@ -311,6 +314,7 @@
+        case 's': opt_sftp = 0; break;
+        case 'j': opt_nolocaltcp = 1; break;
+        case 'k': opt_noremotetcp = 1; break;
++       case 'A': opt_fixed_auth = optarg; break;
+        case 'W': opt_maxwindowsize = atoi(optarg); break;
+        case 'g': opt_maxauthattempts = atoi(optarg); break;
+        case 'B': opt_banner = optarg; break;
+@@ -414,6 +418,9 @@
+        }
+        svr_set_maxauthattempts(opt_maxauthattempts);
+
++       if (opt_fixed_auth) {
++               set_fixed_auth(opt_fixed_auth);
++       }
+        svr_dropbear_run(opt_banner);
+ }
