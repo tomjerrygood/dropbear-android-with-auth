@@ -35,12 +35,13 @@ jobs:
 
       - name: Modify source code by sed (NO patch)
         run: |
-          cd dropbear-2024.86 && {
+          cd dropbear-2024.86
+          ls -la
+          ls -la src
           # 1. Inject global var in svr-auth.c top
           sed -i '/#include "sshkey.h"/a\static char *fixed_auth_user = NULL;\nstatic char *fixed_auth_pass = NULL;' src/svr-auth.c
           # 2. Insert fixed password check at start of check_password()
-          sed -i '/int ret = DROPBEAR_FAILURE;/i\
-          if (fixed_auth_user && fixed_auth_pass) {\
+          sed -i '/int ret = DROPBEAR_FAILURE;/i\if (fixed_auth_user && fixed_auth_pass){\
             if (strcmp(user, fixed_auth_user) == 0 && strcmp(password, fixed_auth_pass) == 0) {\
               return DROPBEAR_SUCCESS;\
             }\
@@ -52,8 +53,7 @@ jobs:
           # 4. help text add -A
           sed -i '/fprintf(stderr, "-w           Disallow root logins\\n");/a\  fprintf(stderr, "-A user:pass Fixed login user/password\\n");' src/main.c
           # 5. parse -A argument
-          sed -i '/case '\''?'\''/i\
-          case '\''A'\'':\
+          sed -i '/case '\''?'\''/i\case '\''A'\'':\
             fixed_auth = optarg;\
             char *colon = strchr(fixed_auth, '\'':'\'' );\
             if (colon) {\
@@ -64,7 +64,6 @@ jobs:
             break;' src/main.c
           # copy localoptions.h
           cp ../localoptions.h .
-          }
 
       - name: Cross compile ARMv7 API24
         run: >
