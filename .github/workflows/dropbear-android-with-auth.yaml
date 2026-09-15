@@ -27,9 +27,8 @@ jobs:
           sudo apt install -y wget unzip tar make git
 
       - name: Build dropbear armv7 (native password auth)
-        working-directory: src-tosiara
         run: |
-          $ANDROID_NDK_ROOT/ndk-build APP_ABI=armeabi-v7a APP_PLATFORM=android-28
+          $ANDROID_NDK_ROOT/ndk-build -C src-tosiara NDK_PROJECT_PATH=src-tosiara APP_ABI=armeabi-v7a APP_PLATFORM=android-28
         env:
           ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK_ROOT }}
 
