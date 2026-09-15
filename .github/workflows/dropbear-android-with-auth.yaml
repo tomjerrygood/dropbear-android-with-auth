@@ -42,7 +42,7 @@ jobs:
           wget -q https://mjt.dt.cc/code/dropbear/dropbear-${{ env.DROPBEAR_VER }}.tar.bz2
           tar -xf dropbear-${{ env.DROPBEAR_VER }}.tar.bz2
 
-      - name: Write localoptions.h with echo (removed heredoc cat)
+      - name: Write localoptions.h
         run: |
           cd dropbear-${{ env.DROPBEAR_VER }}
           echo "#define DROPBEAR_SVR_PASSWORD_AUTH 0" > localoptions.h
@@ -52,29 +52,36 @@ jobs:
           echo "#define DROPBEAR_TCP_FORWARDING 1" >> localoptions.h
           echo "#define DROPBEAR_UNIX_FORWARDING 0" >> localoptions.h
 
-      - name: Patch svr-auth.c inject custom static user/pass check
+      - name: Patch svr-auth.c custom auth code
         run: |
           cd dropbear-${{ env.DROPBEAR_VER }}
-          sed -i '1i static char *custom_auth_user = NULL;\
-static char *custom_auth_pass = NULL;\
-void set_custom_auth(const char *s) {\
-    if (!s) return;\
-    char *sep = strchr(s, '\'':'\');\
-    if (sep) {\
-        *sep = 0;\
-        custom_auth_user = strdup(s);\
-        custom_auth_pass = strdup(sep+1);\
-    }\
-}' src/svr-auth.c
+          # 先定义C代码片段
+          PATCH_HEADER='static char *custom_auth_user = NULL;
+static char *custom_auth_pass = NULL;
 
-          sed -i '/int check_password/,/{/a\
-    if (custom_auth_user && custom_auth_pass) {\
-        if (strcmp(username, custom_auth_user)==0 && strcmp(password, custom_auth_pass)==0) {\
-            return 1;\
-        }\
-    }' src/svr-auth.c
+void set_custom_auth(const char *s) {
+    if (!s) return;
+    char *sep = strchr(s, '\'\'\:'\'\'');
+    if (sep) {
+        *sep = 0;
+        custom_auth_user = strdup(s);
+        custom_auth_pass = strdup(sep+1);
+    }
+}'
+          # 在文件最开头插入上面代码
+          echo "${PATCH_HEADER}" | cat - src/svr-auth.c > src/svr-auth.c.tmp
+          mv src/svr-auth.c.tmp src/svr-auth.c
 
-      - name: Patch svr-runopts.c add -A parameter support
+          # 在check_password函数开头增加校验逻辑
+          PATCH_CHECK='
+    if (custom_auth_user && custom_auth_pass) {
+        if (strcmp(username, custom_auth_user)==0 && strcmp(password, custom_auth_pass)==0) {
+            return 1;
+        }
+    }'
+          sed -i "/int check_password/,/{/a\\${PATCH_CHECK}" src/svr-auth.c
+
+      - name: Patch svr-runopts.c add -A option
         run: |
           cd dropbear-${{ env.DROPBEAR_VER }}
           sed -i 's/getopt(argc, argv, "h:p:d:g:s:b:r:R:W:U:G:m:l:i:k")/getopt(argc, argv, "h:p:d:g:s:b:r:R:W:U:G:m:l:i:kA")/' src/svr-runopts.c
