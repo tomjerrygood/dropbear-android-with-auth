@@ -19,25 +19,24 @@ jobs:
           wget -q https://dl.google.com/android/repository/android-ndk-r21b-linux-x86_64.zip
           unzip -q android-ndk-r21b-linux-x86_64.zip
           echo "ANDROID_NDK_ROOT=$PWD/android-ndk-r21b" >> $GITHUB_ENV
-          echo "PATH=$PWD/android-ndk-r21b/toolchains/llvm/prebuilt/linux-x86_64/bin:${PATH}" >> $GITHUB_ENV
+          echo "PATH=$PWD/android-ndk-r21b:${PATH}" >> $GITHUB_ENV
 
       - name: Install build dependencies
         run: |
           sudo apt update
           sudo apt install -y wget unzip tar make git
 
-      - name: Build dropbear armv7 (native auth)
+      - name: Build dropbear armv7 (native password auth)
         working-directory: src-tosiara
         run: |
-          chmod +x build-all.sh
-          ./build-all.sh arm
+          $ANDROID_NDK_ROOT/ndk-build APP_ABI=armeabi-v7a APP_PLATFORM=android-28
         env:
-          ANDROID_API: 28
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK_ROOT }}
 
       - name: Prepare output artifacts
         run: |
           mkdir -p ./output
-          cp src-tosiara/build/arm/dropbearmulti ./output/
+          cp src-tosiara/libs/armeabi-v7a/dropbearmulti ./output/
           cd output
           ln -s dropbearmulti dropbear
           ln -s dropbearmulti dropbearkey
