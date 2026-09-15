@@ -23,7 +23,7 @@ jobs:
           path: ${{ env.NDK_ROOT }}
           key: ndk-${{ env.NDK_VERSION }}
 
-      - name: Download Android NDK r25c (miss cache only)
+      - name: Download Android NDK r25c (cache miss)
         if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
           wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
@@ -36,27 +36,25 @@ jobs:
           path: ${{ github.workspace }}/dropbear-${{ env.DROPBEAR_VER }}
           key: dropbear-src-${{ env.DROPBEAR_VER }}
 
-      - name: Fetch Dropbear source code (miss cache only)
+      - name: Fetch Dropbear source (cache miss)
         if: steps.cache-dropbear.outputs.cache-hit != 'true'
         run: |
           wget -q https://mjt.dt.cc/code/dropbear/dropbear-${{ env.DROPBEAR_VER }}.tar.bz2
           tar -xf dropbear-${{ env.DROPBEAR_VER }}.tar.bz2
 
-      - name: Write localoptions.h
+      - name: Write localoptions.h with echo (removed heredoc cat)
         run: |
-          cat > dropbear-${{ env.DROPBEAR_VER }}/localoptions.h <<'EOF'
-#define DROPBEAR_SVR_PASSWORD_AUTH 0
-#define DROPBEAR_SVR_PUBKEY_AUTH 1
-#define DROPBEAR_SFTPSERVER 1
-#define DROPBEAR_USE_SSH_CONFIG 0
-#define DROPBEAR_TCP_FORWARDING 1
-#define DROPBEAR_UNIX_FORWARDING 0
-EOF
+          cd dropbear-${{ env.DROPBEAR_VER }}
+          echo "#define DROPBEAR_SVR_PASSWORD_AUTH 0" > localoptions.h
+          echo "#define DROPBEAR_SVR_PUBKEY_AUTH 1" >> localoptions.h
+          echo "#define DROPBEAR_SFTPSERVER 1" >> localoptions.h
+          echo "#define DROPBEAR_USE_SSH_CONFIG 0" >> localoptions.h
+          echo "#define DROPBEAR_TCP_FORWARDING 1" >> localoptions.h
+          echo "#define DROPBEAR_UNIX_FORWARDING 0" >> localoptions.h
 
       - name: Patch svr-auth.c inject custom static user/pass check
         run: |
           cd dropbear-${{ env.DROPBEAR_VER }}
-          # 在 check_password 函数开头插入自定义账号密码判断
           sed -i '1i static char *custom_auth_user = NULL;\
 static char *custom_auth_pass = NULL;\
 void set_custom_auth(const char *s) {\
@@ -79,17 +77,13 @@ void set_custom_auth(const char *s) {\
       - name: Patch svr-runopts.c add -A parameter support
         run: |
           cd dropbear-${{ env.DROPBEAR_VER }}
-          # add -A to optstring
           sed -i 's/getopt(argc, argv, "h:p:d:g:s:b:r:R:W:U:G:m:l:i:k")/getopt(argc, argv, "h:p:d:g:s:b:r:R:W:U:G:m:l:i:kA")/' src/svr-runopts.c
-          # add usage text
           sed -i '/" -l user\tLogin with this user/a\
 "\t-A user:pass\tStatic custom username:password (plaintext auth)\n"' src/svr-runopts.c
-          # add case 'A' handler
           sed -i '/case '\''l'\'':/i\
                 case '\''A'\'':\
                     set_custom_auth(optarg);\
                     break;' src/svr-runopts.c
-          # add extern declaration
           sed -i '1i extern void set_custom_auth(const char *s);' src/svr-runopts.c
 
       - name: Cross-compile ARMv7 API 24
