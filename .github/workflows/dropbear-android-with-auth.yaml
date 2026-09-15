@@ -1,4 +1,4 @@
-name: Build Dropbear 2024.86 ARMv7 Android(API24)
+name: Build Dropbear 2024.86 ARMv7 Android API24
 on:
   push:
     branches: [ main ]
@@ -7,27 +7,44 @@ on:
 env:
   NDK_VERSION: r25c
   NDK_ROOT: ${{ github.workspace }}/android-ndk-r25c
+  DROPBEAR_VER: 2024.86
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Android NDK r25c
+      - name: Cache Android NDK
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NDK_ROOT }}
+          key: ndk-${{ env.NDK_VERSION }}
+
+      - name: Download Android NDK r25c (miss cache only)
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
           wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
           unzip -q android-ndk-r25c-linux.zip
 
-      - name: Download Dropbear 2024.86 source
-        run: |
-          wget -q https://mjt.dt.cc/code/dropbear/dropbear-2024.86.tar.bz2
-          tar -xf dropbear-2024.86.tar.bz2
+      - name: Cache Dropbear source
+        id: cache-dropbear
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/dropbear-${{ env.DROPBEAR_VER }}
+          key: dropbear-src-${{ env.DROPBEAR_VER }}
 
-      - name: Prepare localoptions.h
+      - name: Fetch Dropbear source code (miss cache only)
+        if: steps.cache-dropbear.outputs.cache-hit != 'true'
         run: |
-          cat > dropbear-2024.86/localoptions.h <<'EOF'
+          wget -q https://mjt.dt.cc/code/dropbear/dropbear-${{ env.DROPBEAR_VER }}.tar.bz2
+          tar -xf dropbear-${{ env.DROPBEAR_VER }}.tar.bz2
+
+      - name: Write localoptions.h
+        run: |
+          cat > dropbear-${{ env.DROPBEAR_VER }}/localoptions.h <<'EOF'
 #define DROPBEAR_SVR_PASSWORD_AUTH 0
 #define DROPBEAR_SVR_PUBKEY_AUTH 1
 #define DROPBEAR_SFTPSERVER 1
@@ -36,71 +53,78 @@ jobs:
 #define DROPBEAR_UNIX_FORWARDING 0
 EOF
 
-      - name: Patch svr-auth.c add custom -A user:pass auth
+      - name: Patch svr-auth.c inject custom static user/pass check
         run: |
-          cd dropbear-2024.86
-          sed -i '/int check_password/a\
-static char *custom_auth_user = NULL;\
+          cd dropbear-${{ env.DROPBEAR_VER }}
+          # 在 check_password 函数开头插入自定义账号密码判断
+          sed -i '1i static char *custom_auth_user = NULL;\
 static char *custom_auth_pass = NULL;\
-\
 void set_custom_auth(const char *s) {\
     if (!s) return;\
-    char *sep = strchr(s, \':\');\
+    char *sep = strchr(s, '\'':'\');\
     if (sep) {\
         *sep = 0;\
         custom_auth_user = strdup(s);\
         custom_auth_pass = strdup(sep+1);\
     }\
-}\
-\
-if (custom_auth_user && custom_auth_pass) {\
-    if (strcmp(username, custom_auth_user)==0 && strcmp(password, custom_auth_pass)==0) {\
-        return 1;\
-    }\
 }' src/svr-auth.c
 
-      - name: Patch svr-tcpfwd.c / svr-runopts.c add -A option
+          sed -i '/int check_password/,/{/a\
+    if (custom_auth_user && custom_auth_pass) {\
+        if (strcmp(username, custom_auth_user)==0 && strcmp(password, custom_auth_pass)==0) {\
+            return 1;\
+        }\
+    }' src/svr-auth.c
+
+      - name: Patch svr-runopts.c add -A parameter support
         run: |
-          cd dropbear-2024.86
-          # add -A cmdline argument parsing
-          sed -i '/static void usage/a\
-"\t-A user:pass\tCustom static username/password for auth\n"' src/svr-runopts.c
-          sed -i '/while ((c = getopt(argc, argv,/s/"$/,A"/' src/svr-runopts.c
-          sed -i '/case \'A\':/a\
-set_custom_auth(optarg);\
-break;' src/svr-runopts.c
-          sed -i '/extern void set_custom_auth/d' src/svr-runopts.c
+          cd dropbear-${{ env.DROPBEAR_VER }}
+          # add -A to optstring
+          sed -i 's/getopt(argc, argv, "h:p:d:g:s:b:r:R:W:U:G:m:l:i:k")/getopt(argc, argv, "h:p:d:g:s:b:r:R:W:U:G:m:l:i:kA")/' src/svr-runopts.c
+          # add usage text
+          sed -i '/" -l user\tLogin with this user/a\
+"\t-A user:pass\tStatic custom username:password (plaintext auth)\n"' src/svr-runopts.c
+          # add case 'A' handler
+          sed -i '/case '\''l'\'':/i\
+                case '\''A'\'':\
+                    set_custom_auth(optarg);\
+                    break;' src/svr-runopts.c
+          # add extern declaration
           sed -i '1i extern void set_custom_auth(const char *s);' src/svr-runopts.c
 
-      - name: Cross compile ARMv7 API24
-        run: >
-          set -e;
-          set -x;
-          cd dropbear-2024.86;
-          export NDK=${{ env.NDK_ROOT }};
-          export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64;
-          export TARGET=armv7a-linux-androideabi24;
-          export AR=$TOOLCHAIN/bin/llvm-ar;
-          export CC=$TOOLCHAIN/bin/${TARGET}-clang;
-          export CXX=$TOOLCHAIN/bin/${TARGET}-clang++;
-          export RANLIB=$TOOLCHAIN/bin/llvm-ranlib;
-          export STRIP=$TOOLCHAIN/bin/llvm-strip;
-          ./configure --host=armv7a-linux-androideabi
-            --disable-zlib
-            --enable-static
-            --without-pam
-            --disable-utmp
-            --disable-utmpx
-            --disable-wtmp
-            --disable-wtmpx
-            --disable-loginfunc;
-          make -j1 dropbear dropbearkey;
-          $STRIP dropbear dropbearkey;
+      - name: Cross-compile ARMv7 API 24
+        run: |
+          set -e
+          set -x
+          cd dropbear-${{ env.DROPBEAR_VER }}
+          export NDK=${{ env.NDK_ROOT }}
+          export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+          export TARGET=armv7a-linux-androideabi24
+          export AR=$TOOLCHAIN/bin/llvm-ar
+          export CC=$TOOLCHAIN/bin/${TARGET}-clang
+          export CXX=$TOOLCHAIN/bin/${TARGET}-clang++
+          export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
+          export STRIP=$TOOLCHAIN/bin/llvm-strip
+
+          ./configure \
+            --host=armv7a-linux-androideabi \
+            --disable-zlib \
+            --enable-static \
+            --without-pam \
+            --disable-utmp \
+            --disable-utmpx \
+            --disable-wtmp \
+            --disable-wtmpx \
+            --disable-loginfunc
+
+          make -j1 dropbear dropbearkey
+          $STRIP dropbear dropbearkey
+          ./dropbear -V
 
       - name: Upload compiled binaries
         uses: actions/upload-artifact@v4
         with:
           name: dropbear-armv7-2024.86
           path: |
-            dropbear-2024.86/dropbear
-            dropbear-2024.86/dropbearkey
+            dropbear-${{ env.DROPBEAR_VER }}/dropbear
+            dropbear-${{ env.DROPBEAR_VER }}/dropbearkey
