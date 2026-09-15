@@ -1,48 +1,82 @@
-name: Build dropbear-android (Geofferey repo native build.sh)
+name: Build Dropbear 2024.86 Android ARMv7
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
-      - name: Checkout workspace
-        uses: actions/checkout@v5
+      - name: Checkout source repo
+        uses: actions/checkout@v4
 
-      - name: Clone dropbear-android repo
-        run: git clone https://gitlab.com/Geofferey/dropbear-android.git src-dropbear-android
-
-      - name: Download Android NDK r11c
-        run: |
-          wget -q https://dl.google.com/android/repository/android-ndk-r11c-linux-x86_64.zip
-          unzip -q android-ndk-r11c-linux-x86_64.zip
-          echo "ANDROID_NDK_ROOT=$PWD/android-ndk-r11c" >> $GITHUB_ENV
-          echo "PATH=$PWD/android-ndk-r11c:${PATH}" >> $GITHUB_ENV
-
-      - name: Install dependencies
+      - name: Install build prerequisites
         run: |
           sudo apt update
-          sudo apt install -y wget unzip tar make git bzip2 patch
+          sudo apt install -y wget bzip2 unzip autoconf automake libtool make git patch
 
-      - name: Run original build.sh
-        working-directory: src-dropbear-android
+      - name: Fetch Android NDK r25c
         run: |
-          chmod +x build.sh
-          ./build.sh
+          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip -q android-ndk-r25c-linux.zip
+          echo "NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV
 
-      - name: Collect binaries
+      - name: Download Dropbear 2024.86 upstream source
         run: |
-          mkdir -p ./output
-          cp src-dropbear-android/target/arm/dropbearmulti ./output/
-          cd output
-          ln -s dropbearmulti dropbear
-          ln -s dropbearmulti dropbearkey
-          ln -s dropbearmulti scp
+          wget https://mjt.dt.cc/code/dropbear/dropbear-2024.86.tar.bz2
+          tar -xjvf dropbear-2024.86.tar.bz2
 
-      - name: Upload artifact
+      - name: Apply authentication patch
+        run: |
+          cd dropbear-2024.86
+          patch -p1 < ../android-dropbear-auth.patch
+
+      - name: Cross compile armeabi-v7a (ARMv7 API24)
+        run: |
+          cd dropbear-2024.86
+          export NDK=${{ env.NDK_ROOT }}
+          export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+          export TARGET=armv7a-linux-androideabi24
+          export AR=$TOOLCHAIN/bin/llvm-ar
+          export CC=$TOOLCHAIN/bin/${TARGET}-clang
+          export CXX=$TOOLCHAIN/bin/${TARGET}-clang++
+          export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
+          export STRIP=$TOOLCHAIN/bin/llvm-strip
+
+          cat > localoptions.h <<'EOF'
+#define DROPBEAR_DEFAULT_PORT 2222
+#define DROPBEAR_SFTPSERVER 1
+#define DROPBEAR_USE_PASSWORD_AUTH 1
+#define DROPBEAR_PUBKEY_AUTH 1
+#define DROPBEAR_NO_X11 1
+#define DROPBEAR_SMALL_CODE 1
+#define DROPBEAR_AES 1
+#define DROPBEAR_SHA2_256_HASH 1
+#define DROPBEAR_SHA2_512_HASH 1
+#define DROPBEAR_ED25519 1
+#define DROPBEAR_DSS 0
+#define DROPBEAR_RSA 1
+EOF
+
+          ./configure \
+            --host=armv7a-linux-androideabi \
+            --disable-zlib \
+            --enable-static \
+            --without-pam \
+            --disable-utmp \
+            --disable-utmpx \
+            --disable-wtmp \
+            --disable-wtmpx \
+            --disable-loginfunc \
+            --disable-pututxline
+
+          make -j$(nproc)
+          $STRIP dropbear dbclient dropbearkey
+
+      - name: Upload compiled binaries
         uses: actions/upload-artifact@v4
         with:
-          name: tosiara-dropbear-armv7-android9
-          path: output/
+          name: dropbear-armv7-2024.86
+          path: |
+            dropbear-2024.86/dropbear
+            dropbear-2024.86/dbclient
+            dropbear-2024.86/dropbearkey
