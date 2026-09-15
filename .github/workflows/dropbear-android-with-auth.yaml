@@ -1,3 +1,38 @@
+name: Build Dropbear 2024.86 Android ARMv7
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt update
+          sudo apt install -y wget bzip2 unzip autoconf automake libtool make git
+
+      - name: Cache Android NDK r25c
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: android-ndk-r25c
+          key: ndk-r25c-linux
+
+      - name: Fetch Android NDK r25c (miss cache only)
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: |
+          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip -q android-ndk-r25c-linux.zip
+          echo "NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+
+      - name: Download Dropbear 2024.86 source
+        run: |
+          wget https://dropbear.nl/mirror/releases/dropbear-2024.86.tar.bz2
+          tar -xjvf dropbear-2024.86.tar.bz2
+
       - name: Modify source code by sed (NO patch)
         run: |
           cd dropbear-2024.86 && {
@@ -30,3 +65,30 @@
           # copy localoptions.h
           cp ../localoptions.h .
           }
+
+      - name: Cross compile ARMv7 API24
+        run: >
+          set -e;
+          set -x;
+          cd dropbear-2024.86;
+          export NDK=${{ env.NDK_ROOT }};
+          export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64;
+          export TARGET=armv7a-linux-androideabi24;
+          export AR=$TOOLCHAIN/bin/llvm-ar;
+          export CC=$TOOLCHAIN/bin/${TARGET}-clang;
+          export CXX=$TOOLCHAIN/bin/${TARGET}-clang++;
+          export RANLIB=$TOOLCHAIN/bin/llvm-ranlib;
+          export STRIP=$TOOLCHAIN/bin/llvm-strip;
+          ./configure --host=armv7a-linux-androideabi --disable-zlib --enable-static --without-pam --disable-utmp --disable-utmpx --disable-wtmp --disable-wtmpx --disable-loginfunc --disable-pututxline;
+          make -j1;
+          $STRIP dropbear dbclient dropbearkey;
+          ./dropbear -V;
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: dropbear-armv7-2024.86
+          path: |
+            dropbear-2024.86/dropbear
+            dropbear-2024.86/dbclient
+            dropbear-2024.86/dropbearkey
