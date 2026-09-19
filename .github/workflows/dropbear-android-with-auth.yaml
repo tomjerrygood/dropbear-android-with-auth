@@ -34,8 +34,8 @@ jobs:
         env:
           TOOLCHAIN: ${{ github.workspace }}/android-arm-toolchain
         run: |
-          chmod +x build.sh
-          ./build.sh
+          chmod +x build-dropbear-android.sh
+          ./build-dropbear-android.sh
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
