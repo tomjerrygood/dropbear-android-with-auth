@@ -1,10 +1,8 @@
-name: build-dropbear-android-32-r17c
-
+name: Build Dropbear Android
 on:
-  workflow_dispatch:
   push:
-    branches: [ "main", "master" ]
-  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,100 +11,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build deps
+      - name: Install host build dependencies
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            build-essential autoconf automake libtool \
-            gawk flex bison patch \
-            wget unzip xz-utils file python3
+          sudo apt update
+          sudo apt install -y wget tar bzip2 unzip python3 python3-distutils make patch
 
-      - name: Install NDK r17c (via sdkmanager)
-        env:
-          ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
+      - name: Download Android NDK r17c direct zip
         run: |
-          set -e
-          mkdir -p "$ANDROID_SDK_ROOT"
+          wget -q https://dl.google.com/android/repository/android-ndk-r17c-linux-x86_64.zip
+          unzip -q android-ndk-r17c-linux-x86_64.zip
 
-          cd /tmp
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
-          unzip -q cmdline-tools.zip -d "$ANDROID_SDK_ROOT"
-
-          # normalize cmdline-tools path
-          if [ ! -f "$ANDROID_SDK_ROOT/cmdline-tools/bin/sdkmanager" ]; then
-            # If extracted to .../cmdline-tools/cmdline-tools/bin/sdkmanager
-            if [ -f "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools/bin/sdkmanager" ]; then
-              mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/bin"
-              cp -r "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools/bin/"* "$ANDROID_SDK_ROOT/cmdline-tools/bin/"
-            fi
-          fi
-
-          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/bin/sdkmanager"
-          chmod +x "$SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses > /dev/null
-
-          "$SDKMANAGER" --install "platform-tools" "ndk;17.2.4988734"
-
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-
-          NDK_HOME="$ANDROID_SDK_ROOT/ndk/17.2.4988734"
-          if [ ! -d "$NDK_HOME" ]; then
-            # fallback: find ndk
-            NDK_HOME="$(find "$ANDROID_SDK_ROOT/ndk" -maxdepth 1 -type d | head -n1)"
-          fi
-          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
-          echo "NDK_HOME resolved to: $NDK_HOME"
-
-      - name: Create standalone toolchain (arm-linux-androideabi, 32-bit)
+      - name: Build standalone toolchain
         run: |
-          set -e
-          : "${NDK_HOME:?NDK_HOME not set}"
-          TOOLCHAIN_DIR="$GITHUB_WORKSPACE/toolchain"
-          rm -rf "$TOOLCHAIN_DIR"
-          mkdir -p "$TOOLCHAIN_DIR"
-
-          # r17c standalone toolchain script
-          MAKE_TOOLCHAIN="$NDK_HOME/build/tools/make_standalone_toolchain.py"
-          if [ ! -f "$MAKE_TOOLCHAIN" ]; then
-            echo "[ERROR] make_standalone_toolchain.py not found at: $MAKE_TOOLCHAIN"
-            exit 1
-          fi
-
-          # API level: 21 is a reasonable baseline for Android >= 5.0
-          API=21
-
-          python3 "$MAKE_TOOLCHAIN" \
+          cd android-ndk-r17c/build/tools
+          python3 make_standalone_toolchain.py \
             --arch arm \
-            --api "$API" \
-            --stl=stlport \
-            --force \
-            --install-dir "$TOOLCHAIN_DIR"
+            --api 21 \
+            --install-dir $GITHUB_WORKSPACE/android-arm-toolchain \
+            --force
 
-          if [ ! -x "$TOOLCHAIN_DIR/bin/arm-linux-androideabi-gcc" ]; then
-            echo "[ERROR] arm-linux-androideabi-gcc not found in toolchain."
-            ls -la "$TOOLCHAIN_DIR/bin" || true
-            exit 1
-          fi
-
-          if [ ! -d "$TOOLCHAIN_DIR/sysroot" ]; then
-            echo "[ERROR] sysroot not found in toolchain."
-            find "$TOOLCHAIN_DIR" -maxdepth 2 -type d -name sysroot || true
-            exit 1
-          fi
-
-          echo "TOOLCHAIN=$TOOLCHAIN_DIR" >> $GITHUB_ENV
-
-      - name: Build dropbear (uses VERSION=2018.76 and ARM 32-bit)
+      - name: Compile dropbear with your build.sh
+        env:
+          TOOLCHAIN: ${{ github.workspace }}/android-arm-toolchain
         run: |
-          set -e
-          chmod +x ./build-dropbear-android.sh
-          export TOOLCHAIN="${TOOLCHAIN}"
+          chmod +x build.sh
+          ./build.sh
 
-          ./build-dropbear-android.sh
-
-      - name: Upload artifacts
+      - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
-          name: dropbear-android-32-r17c
-          path: |
-            target/arm/*
+          name: dropbear-arm-android
+          path: target/arm/
