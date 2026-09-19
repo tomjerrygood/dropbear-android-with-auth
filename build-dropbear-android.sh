@@ -51,15 +51,15 @@ echo
 echo
 #########################################################################################################################
 ### END -- configure without modifications first to generate files 
-
 # Begin applying changes to make Android compatible
 # Apply the compatibility patch
+cd dropbear-$VERSION
 patch -p1 < ../android-compat.patch
 cd -
-
 echo "Compiling for ARM"  
-
 cd dropbear-$VERSION
+
+
     
 ./configure --host=$HOST --disable-utmp --disable-wtmp --disable-utmpx --disable-zlib --disable-syslog
 
