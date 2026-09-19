@@ -32,10 +32,14 @@ cd dropbear-${VERSION}
   --disable-syslog \
   --disable-lastlog \
   CFLAGS="${EXTRA_CFLAGS} -Os"
-echo "=== Start make ==="
-# 只编译服务端+密钥工具，跳过dbclient、dropbearconvert
+
+echo "=== make clean 清除旧编译产物，避免残留dbclient目标文件 ==="
+make clean
+
+echo "=== Start make: 仅编译 dropbear dropbearkey ==="
 make -j$(nproc) PROGRAMS="dropbear dropbearkey"
-make install
+make install PROGRAMS="dropbear dropbearkey"
+
 echo "=== Copy binaries ==="
 mkdir -p ../target/arm
 cp ${PREFIX}/sbin/dropbear ../target/arm/
