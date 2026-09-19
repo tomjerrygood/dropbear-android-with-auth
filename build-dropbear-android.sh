@@ -13,7 +13,10 @@ export PATH="$TOOLCHAIN/bin:$PATH"
 EXTRA_CFLAGS="-Dstderr=__stderrp -Dstdout=__stdoutp -Dstdin=__stdinp"
 
 echo "=== Download dropbear source ==="
-wget -q https://mjt.dl.sourceforge.net/project/dropbear-${VERSION}.tar.bz2
+# Download the latest version of dropbear SSH
+if [ ! -f ./dropbear-$VERSION.tar.bz2 ]; then
+    wget -O ./dropbear-$VERSION.tar.bz2 https://matt.ucc.asn.au/dropbear/releases/dropbear-$VERSION.tar.bz2
+fi
 
 echo "=== Extract source ==="
 tar -xjf dropbear-${VERSION}.tar.bz2
