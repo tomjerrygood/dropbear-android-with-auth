@@ -1,131 +1,112 @@
-name: Build Dropbear 2024.86 ARMv7 Android API24
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
+name: build-dropbear-android-32-r17c
 
-env:
-  NDK_VERSION: r25c
-  NDK_ROOT: ${{ github.workspace }}/android-ndk-r25c
-  DROPBEAR_VER: 2024.86
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache Android NDK
-        id: cache-ndk
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.NDK_ROOT }}
-          key: ndk-${{ env.NDK_VERSION }}
-
-      - name: Download Android NDK r25c
-        if: steps.cache-ndk.outputs.cache-hit != 'true'
+      - name: Install build deps
         run: |
-          wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
-          unzip -q android-ndk-r25c-linux.zip
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            build-essential autoconf automake libtool \
+            gawk flex bison patch \
+            wget unzip xz-utils file python3
 
-      - name: Cache Dropbear source
-        id: cache-dropbear
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/dropbear-${{ env.DROPBEAR_VER }}
-          key: dropbear-src-${{ env.DROPBEAR_VER }}
-
-      - name: Fetch Dropbear source
-        if: steps.cache-dropbear.outputs.cache-hit != 'true'
-        run: |
-          wget -q https://mjt.dt.cc/code/dropbear/dropbear-${{ env.DROPBEAR_VER }}.tar.bz2
-          tar -xf dropbear-${{ env.DROPBEAR_VER }}.tar.bz2
-
-      - name: Write localoptions.h
-        run: |
-          cd dropbear-${{ env.DROPBEAR_VER }}
-          echo "#define DROPBEAR_SVR_PASSWORD_AUTH 0" > localoptions.h
-          echo "#define DROPBEAR_SVR_PUBKEY_AUTH 1" >> localoptions.h
-          echo "#define DROPBEAR_SFTPSERVER 1" >> localoptions.h
-          echo "#define DROPBEAR_USE_SSH_CONFIG 0" >> localoptions.h
-          echo "#define DROPBEAR_TCP_FORWARDING 1" >> localoptions.h
-          echo "#define DROPBEAR_UNIX_FORWARDING 0" >> localoptions.h
-
-      - name: Patch svr-auth.c
-        run: |
-          cd dropbear-${{ env.DROPBEAR_VER }}
-          cat > patch_head.txt <<'EOF'
-static char *custom_auth_user = NULL;
-static char *custom_auth_pass = NULL;
-
-void set_custom_auth(const char *s) {
-    if (!s) return;
-    char *sep = strchr(s, ':');
-    if (sep) {
-        *sep = 0;
-        custom_auth_user = strdup(s);
-        custom_auth_pass = strdup(sep+1);
-    }
-}
-EOF
-          cat patch_head.txt src/svr-auth.c > src/svr-auth.c.tmp
-          mv src/svr-auth.c.tmp src/svr-auth.c
-
-          cat > patch_check.txt <<'EOF'
-    if (custom_auth_user && custom_auth_pass) {
-        if (strcmp(username, custom_auth_user)==0 && strcmp(password, custom_auth_pass)==0) {
-            return 1;
-        }
-    }
-EOF
-          sed -i '/int check_password/,/{/r patch_check.txt' src/svr-auth.c
-
-      - name: Patch svr-runopts.c
-        run: |
-          cd dropbear-${{ env.DROPBEAR_VER }}
-          sed -i 's/getopt(argc, argv, "h:p:d:g:s:b:r:R:W:U:G:m:l:i:k")/getopt(argc, argv, "h:p:d:g:s:b:r:R:W:U:G:m:l:i:kA")/' src/svr-runopts.c
-          sed -i '/" -l user\tLogin with this user/a\
-"\t-A user:pass\tStatic custom username:password (plaintext auth)\n"' src/svr-runopts.c
-          sed -i '/case '\''l'\'':/i\
-                case '\''A'\'':\
-                    set_custom_auth(optarg);\
-                    break;' src/svr-runopts.c
-          sed -i '1i extern void set_custom_auth(const char *s);' src/svr-runopts.c
-
-      - name: Cross-compile ARMv7 API 24
+      - name: Install NDK r17c (via sdkmanager)
+        env:
+          ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
         run: |
           set -e
-          set -x
-          cd dropbear-${{ env.DROPBEAR_VER }}
-          export NDK=${{ env.NDK_ROOT }}
-          export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
-          export TARGET=armv7a-linux-androideabi24
-          export AR=$TOOLCHAIN/bin/llvm-ar
-          export CC=$TOOLCHAIN/bin/${TARGET}-clang
-          export CXX=$TOOLCHAIN/bin/${TARGET}-clang++
-          export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
-          export STRIP=$TOOLCHAIN/bin/llvm-strip
+          mkdir -p "$ANDROID_SDK_ROOT"
 
-          ./configure \
-            --host=armv7a-linux-androideabi \
-            --disable-zlib \
-            --enable-static \
-            --without-pam \
-            --disable-utmp \
-            --disable-utmpx \
-            --disable-wtmp \
-            --disable-wtmpx \
-            --disable-loginfunc
+          cd /tmp
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
+          unzip -q cmdline-tools.zip -d "$ANDROID_SDK_ROOT"
 
-          make -j1 dropbear dropbearkey
-          $STRIP dropbear dropbearkey
-          ./dropbear -V
+          # normalize cmdline-tools path
+          if [ ! -f "$ANDROID_SDK_ROOT/cmdline-tools/bin/sdkmanager" ]; then
+            # If extracted to .../cmdline-tools/cmdline-tools/bin/sdkmanager
+            if [ -f "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools/bin/sdkmanager" ]; then
+              mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/bin"
+              cp -r "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools/bin/"* "$ANDROID_SDK_ROOT/cmdline-tools/bin/"
+            fi
+          fi
 
-      - name: Upload compiled binaries
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/bin/sdkmanager"
+          chmod +x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null
+
+          "$SDKMANAGER" --install "platform-tools" "ndk;17.2.4988734"
+
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+
+          NDK_HOME="$ANDROID_SDK_ROOT/ndk/17.2.4988734"
+          if [ ! -d "$NDK_HOME" ]; then
+            # fallback: find ndk
+            NDK_HOME="$(find "$ANDROID_SDK_ROOT/ndk" -maxdepth 1 -type d | head -n1)"
+          fi
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+          echo "NDK_HOME resolved to: $NDK_HOME"
+
+      - name: Create standalone toolchain (arm-linux-androideabi, 32-bit)
+        run: |
+          set -e
+          : "${NDK_HOME:?NDK_HOME not set}"
+          TOOLCHAIN_DIR="$GITHUB_WORKSPACE/toolchain"
+          rm -rf "$TOOLCHAIN_DIR"
+          mkdir -p "$TOOLCHAIN_DIR"
+
+          # r17c standalone toolchain script
+          MAKE_TOOLCHAIN="$NDK_HOME/build/tools/make_standalone_toolchain.py"
+          if [ ! -f "$MAKE_TOOLCHAIN" ]; then
+            echo "[ERROR] make_standalone_toolchain.py not found at: $MAKE_TOOLCHAIN"
+            exit 1
+          fi
+
+          # API level: 21 is a reasonable baseline for Android >= 5.0
+          API=21
+
+          python3 "$MAKE_TOOLCHAIN" \
+            --arch arm \
+            --api "$API" \
+            --stl=stlport \
+            --force \
+            --install-dir "$TOOLCHAIN_DIR"
+
+          if [ ! -x "$TOOLCHAIN_DIR/bin/arm-linux-androideabi-gcc" ]; then
+            echo "[ERROR] arm-linux-androideabi-gcc not found in toolchain."
+            ls -la "$TOOLCHAIN_DIR/bin" || true
+            exit 1
+          fi
+
+          if [ ! -d "$TOOLCHAIN_DIR/sysroot" ]; then
+            echo "[ERROR] sysroot not found in toolchain."
+            find "$TOOLCHAIN_DIR" -maxdepth 2 -type d -name sysroot || true
+            exit 1
+          fi
+
+          echo "TOOLCHAIN=$TOOLCHAIN_DIR" >> $GITHUB_ENV
+
+      - name: Build dropbear (uses VERSION=2018.76 and ARM 32-bit)
+        run: |
+          set -e
+          chmod +x ./build-dropbear-android.sh
+          export TOOLCHAIN="${TOOLCHAIN}"
+
+          ./build-dropbear-android.sh
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dropbear-armv7-2024.86
+          name: dropbear-android-32-r17c
           path: |
-            dropbear-${{ env.DROPBEAR_VER }}/dropbear
-            dropbear-${{ env.DROPBEAR_VER }}/dropbearkey
+            target/arm/*
